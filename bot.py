@@ -1,88 +1,81 @@
+import logging
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-import time
 from telegram import Bot
-from telegram.ext import Updater, CommandHandler
-import os
+from telegram.constants import ParseMode
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
+import asyncio
 
-# Variáveis de ambiente
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-GROUP_ID = os.getenv('GROUP_ID')
+TELEGRAM_TOKEN = '7795115723:AAFrAMolk2M2dzu1glrFSzrklR6t-caSmlg'
+CHAT_ID = '-1001981830209'
 
-# Lista de feeds RSS
-rss_feeds = [
+RSS_FEEDS = [
     "https://www.abola.pt/rss/scp",
     "https://www.ojogo.pt/rss/sporting",
     "https://www.record.pt/rss/sporting",
     "https://www.fpf.pt/rss/atualidade",
+    "https://www.sporting.pt/pt/noticias",
     "https://sicnoticias.pt/rss",
     "https://tvi.iol.pt/rss",
     "https://cnnportugal.iol.pt/rss",
     "https://www.flashscore.pt/rss",
     "https://www.zerozero.pt/rss",
     "https://www.rtp.pt/rss",
+    "https://maisfutebol.iol.pt/rss"
 ]
 
-# Função para buscar as notícias
-def get_sporting_news():
-    news_list = []
-    for feed_url in rss_feeds:
+last_titles = set()
+
+logging.basicConfig(level=logging.INFO)
+
+async def send_news(context: ContextTypes.DEFAULT_TYPE):
+    global last_titles
+
+    for feed_url in RSS_FEEDS:
         feed = feedparser.parse(feed_url)
+
         for entry in feed.entries:
-            if "Sporting" in entry.title:
-                news_list.append({
-                    'title': entry.title,
-                    'link': entry.link,
-                    'description': entry.description,
-                    'published': entry.published,
-                    'image': get_image_from_url(entry.link)
-                })
-    return news_list
+            if entry.title not in last_titles:
+                last_titles.add(entry.title)
 
-# Função para extrair imagem da página (usando BeautifulSoup)
-def get_image_from_url(url):
-    try:
-        page = requests.get(url)
-        soup = BeautifulSoup(page.content, 'html.parser')
-        image = soup.find('meta', property='og:image')
-        return image['content'] if image else None
-    except Exception as e:
-        return None
+                # Tentar obter imagem da descrição (se existir)
+                soup = BeautifulSoup(entry.get("summary", ""), "html.parser")
+                img_tag = soup.find("img")
+                image_url = img_tag["src"] if img_tag else None
 
-# Enviar notícia para o grupo no Telegram
-def send_news(update, context):
-    news_list = get_sporting_news()
-    for news in news_list:
-        title = news['title']
-        description = news['description']
-        link = news['link']
-        image = news['image']
+                message = f"*{entry.title}*\n\n{entry.get('summary', '')}\n\n[Link]({entry.link})"
 
-        message = f"📰 *{title}*\n\n{description}\n\n🔗 {link}"
-        if image:
-            context.bot.send_photo(chat_id=GROUP_ID, photo=image, caption=message)
-        else:
-            context.bot.send_message(chat_id=GROUP_ID, text=message)
+                try:
+                    if image_url:
+                        await context.bot.send_photo(
+                            chat_id=CHAT_ID,
+                            photo=image_url,
+                            caption=entry.title,
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                    else:
+                        await context.bot.send_message(
+                            chat_id=CHAT_ID,
+                            text=message,
+                            parse_mode=ParseMode.MARKDOWN,
+                            disable_web_page_preview=False
+                        )
+                except Exception as e:
+                    logging.error(f"Erro ao enviar mensagem: {e}")
 
-# Comando /sporting
-def start(update, context):
-    send_news(update, context)
+async def start(update, context):
+    await update.message.reply_text("Bot está ativo!")
 
-# Função principal do bot
-def main():
-    updater = Updater(TELEGRAM_TOKEN, use_context=True)
-    dp = updater.dispatcher
+async def main():
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Comando /sporting
-    dp.add_handler(CommandHandler("sporting", start))
+    app.add_handler(CommandHandler("start", start))
 
-    # Start the bot
-    updater.start_polling()
-    updater.idle()
+    # Envia notícias a cada 30 minutos
+    app.job_queue.run_repeating(send_news, interval=1800, first=5)
 
-# Para correr o bot a cada 30 minutos
+    await app.run_polling()
+
 if __name__ == '__main__':
-    while True:
-        main()
-        time.sleep(1800)  # 30 minutos
+    asyncio.run(main())
