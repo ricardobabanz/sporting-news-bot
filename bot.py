@@ -1,7 +1,6 @@
 import os
 import logging
 import feedparser
-import requests
 from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.constants import ParseMode
@@ -52,17 +51,11 @@ async def send_news(context: ContextTypes.DEFAULT_TYPE):
             lower = title.lower()
 
             if link not in sent_links and any(k in lower for k in KEYWORDS):
-                description = entry.get("summary", entry.get("description", ""))
-                # Extrai og:image
-                image_url = None
-                try:
-                    r = requests.get(link, timeout=5)
-                    soup = BeautifulSoup(r.content, "html.parser")
-                    img = soup.find("meta", property="og:image")
-                    image_url = img["content"] if img else None
-                except Exception as e:
-                    logging.warning(f"Erro imagem {link}: {e}")
+                # limpa HTML do resumo
+                raw_desc   = entry.get("summary", entry.get("description", ""))
+                description = BeautifulSoup(raw_desc, "html.parser").get_text()
 
+                # monta a mensagem só com texto
                 caption = (
                     f"📰 <b>{title}</b>\n\n"
                     f"{description}\n\n"
@@ -70,20 +63,12 @@ async def send_news(context: ContextTypes.DEFAULT_TYPE):
                 )
 
                 try:
-                    if image_url:
-                        await context.bot.send_photo(
-                            chat_id=CHAT_ID,
-                            photo=image_url,
-                            caption=caption,
-                            parse_mode=ParseMode.HTML
-                        )
-                    else:
-                        await context.bot.send_message(
-                            chat_id=CHAT_ID,
-                            text=caption,
-                            parse_mode=ParseMode.HTML,
-                            disable_web_page_preview=False
-                        )
+                    await context.bot.send_message(
+                        chat_id=CHAT_ID,
+                        text=caption,
+                        parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=False
+                    )
                     sent_links.add(link)
                     logging.info(f"Enviado: {title}")
                 except Exception as e:
